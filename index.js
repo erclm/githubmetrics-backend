@@ -17,6 +17,10 @@ const RepoSchema = new mongoose.Schema({
   stars: Number,
   forks: Number,
   issues: Number,
+  healthScore: Number,
+  trendingFactor: Number,
+  activityLevel: String,
+  mainLanguage: String,
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -46,12 +50,38 @@ app.post('/api/repos', async (req, res) => {
     const data = await response.json();
     
     // Create new repo entry
+    // Calculate health score (0-100)
+    const healthScore = Math.min(100, Math.round(
+      (data.stargazers_count * 0.5 + 
+       data.forks_count * 2 + 
+       Math.max(0, 100 - data.open_issues_count) * 0.3) / 10
+    ));
+
+    // Calculate trending factor based on recent activity
+    const daysSinceLastPush = Math.round(
+      (new Date() - new Date(data.pushed_at)) / (1000 * 60 * 60 * 24)
+    );
+    const trendingFactor = Math.round(
+      (data.stargazers_count / Math.max(1, daysSinceLastPush)) * 10
+    );
+
+    // Determine activity level
+    let activityLevel;
+    if (daysSinceLastPush <= 7) activityLevel = "Very Active 🔥";
+    else if (daysSinceLastPush <= 30) activityLevel = "Active 👍";
+    else if (daysSinceLastPush <= 90) activityLevel = "Moderate 👀";
+    else activityLevel = "Low 💤";
+
     const repoEntry = new Repo({
       url: url,
       name: data.full_name,
       stars: data.stargazers_count,
       forks: data.forks_count,
-      issues: data.open_issues_count
+      issues: data.open_issues_count,
+      healthScore: healthScore,
+      trendingFactor: trendingFactor,
+      activityLevel: activityLevel,
+      mainLanguage: data.language || 'Not specified'
     });
     
     await repoEntry.save();
@@ -65,6 +95,18 @@ app.get('/api/repos', async (req, res) => {
   try {
     const repos = await Repo.find().sort({ createdAt: -1 });
     res.json(repos);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/repos/:id', async (req, res) => {
+  try {
+    const result = await Repo.findByIdAndDelete(req.params.id);
+    if (!result) {
+      return res.status(404).json({ error: 'Repository not found' });
+    }
+    res.json({ message: 'Repository deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
